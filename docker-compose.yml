@@ -1,0 +1,33 @@
+services:
+  python:
+    build: .
+    command: sh
+    tty: true    # Keep the terminal open
+    stdin_open: true  # Allow interaction with the container
+    container_name: python
+    volumes:
+      - ./scripts:/root/scripts
+    environment:
+      POSTGRES_PASSWORD: password
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:alpine
+    container_name: postgres
+    environment:
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgres/data
+      - ./scripts:/root/scripts
+      - ./data:/root/data
+
+  # cloudbeaver:
+  #   image: dbeaver/cloudbeaver:latest
+  #   container_name: cloudbeaver
+  #   ports:
+  #     - "8978:8978"
+  #   depends_on:
+  #     - postgres
+
+volumes:
+  postgres_data:
