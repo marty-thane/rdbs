@@ -1,4 +1,3 @@
-drop view if exists pr_stats;
 drop table if exists user_stats;
 drop table if exists deleted_users;
 drop table if exists posts_topics;

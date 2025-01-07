@@ -3,8 +3,7 @@ select avg(n_live_tup) as row_avg from pg_stat_user_tables;
 
 -- VIEW (1x) s podstatnými informacemi z několika tabulek najednou
 -- - jeden SELECT bude obsahovat vnořený SELECT
-drop view if exists pr_stats;
-create view pr_stats as select
+create or replace view pr_stats as select
 (select count(*) from users) as users,
 (select count(*) from posts) as posts,
 (select count(*) from likes) +
@@ -12,7 +11,7 @@ create view pr_stats as select
 
 -- INDEX (1x), indexový soubor nad nějakým sloupcem tabulky
 -- - alespoň jeden netriviální indexový soubor (unikátní, fulltextový, …)
-create index posts_idx on posts using gin (to_tsvector('english', content));
+create or replace index posts_idx on posts using gin (to_tsvector('english', content));
 select u.username, p.content
 from posts p
 inner join users u on p.user_id = u.id
@@ -56,14 +55,20 @@ create table user_stats (
     following integer not null,
     foreign key (user_id) references users(id) on delete cascade
 );
+create or replace view user_follows as select 
+    u.id as user_id,
+    (select count(*) from follows f where f.to_user_id = u.id) as follows
+from users u;
+create or replace view user_following as select 
+    u.id as user_id,
+    (select count(*) from follows f where f.from_user_id = u.id) as following
+from users u;
 create or replace procedure gen_user_stats()
 language plpgsql
 as $$
 declare
-	user_cursor cursor for select * from users;
+	user_cursor cursor for select id, follows, following from user_follows full join user_following;
 	user_record record;
-	follows integer;
-	following integer;
 begin
 	begin
 		delete from user_stats; -- vycisti tabulku
@@ -71,16 +76,11 @@ begin
 		loop
 			fetch next from user_cursor into user_record;
 			exit when not found;
-			select count(*) into follows
-			from follows
-			where to_user_id = user_record.id;
-			select count(*) into following
-			from follows
-			where from_user_id = user_record.id;
 			insert into user_stats(user_id,follows,following)
-			values(user_record.id,follows,following);
+			values(user_record.id,user_record.follows,user_record.following);
 		end loop;
 		close user_cursor;
+		-- commit;
 	exception
 	when others then
 		rollback;
@@ -98,17 +98,32 @@ create table deleted_users (
     time timestamptz default now()
 );
 create or replace function log_user_deletion()
-returns trigger as $$
+language plpgsql
+returns trigger
+as $$
 begin
     insert into deleted_users(username)
     values (old.username);
     return old;
-end;
-$$ language plpgsql;
+end; $$;
 create trigger user_delete_trigger
 after delete on users
 for each row
 execute function log_user_deletion();
+create or replace function check_username()
+language plpgsql
+returns trigger
+as $$
+begin
+    if exists (select 1 from deleted_users where username = new.username) then
+        raise exception 'This username is already taken';
+    end if;
+    return new;
+end; $$;
+create trigger user_insert_trigger
+before insert on users
+for each row
+execute function check_username();
 
 -- USER - mít předem připravené příkazy na ukázku práce s účty uživatelů
 -- - umět vytvořit/odstranit účet uživatele CREATE/DROP USER
@@ -124,9 +139,8 @@ grant select on table pr_stats to anon;
 -- zvolený DBMS umožňuje)
 -- - LOCK TABLE Vyrobky READ / UNLOCK TABLE Vyrobky / UNLOCK TABLES
 begin;
-	lock table posts in access exclusive mode;
-	delete from comments;
-commit;
+	lock table pr_stats in access exclusive mode;
+end;
 
 -- ORM – umět používat objektově-relační mapování
 -- - některý z výše uvedených úkolů realizovat pomocí vhodného ORM, např. SQLAlchemy,
